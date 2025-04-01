@@ -29,9 +29,9 @@ import java.util.stream.Collectors;
  */
 @AllArgsConstructor
 public class PaymentRemoteService {
-    private CircuitBreak circuitBreak;
-    private Metric metric;
-    private RateLimiter rateLimiter;
+    private CircuitBreak circuitBreak; // 熔断器
+    private Metric metric;             // 埋点上报
+    private RateLimiter rateLimiter;   // 限流
 
     // 定义通用线程池 - TODO 根据实际情况对参数进行调整
     private static final ExecutorService executor = new ThreadPoolExecutor(
@@ -40,14 +40,12 @@ public class PaymentRemoteService {
             10L,
             TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(100),
-            Executors.defaultThreadFactory(), // 可自定义线程名称等属性
-            new ThreadPoolExecutor.CallerRunsPolicy() // 拒绝策略（按需选择）
+            Executors.defaultThreadFactory(),
+            new ThreadPoolExecutor.CallerRunsPolicy()
     );
     public static void close(){
         executor.shutdown();
     }
-
-
 
     private static final Map<PaymentTypeEnum, PaymentService> serviceMap = new HashMap<>(){{
         put(PaymentTypeEnum.Balance, new PaymentBalanceImp());
@@ -55,24 +53,23 @@ public class PaymentRemoteService {
 
     }};
 
-    // TODO - 配置化，支持热更新，当前先写死
+    // TODO - 配置化，支持热更新，demo中写死
     // ------  重试相关参数
     private static final long maxDurationMillis = 1000; // 最大重试次数
     private static final long retryDelayMillis = 100; // 每次重试间隔
     private static final int  retryTimes = 3; // 重试次数
-
     // ------  缓存相关参数
     private static final long cacheExpireMillis = 1000;
     private static final long refreshMillis = (long) (0.7 * cacheExpireMillis);  // 0.7 可以根据实际场景进行调优
-
     // ------ 超时配置
     private static final long singleTimeOutMillis = 1000;
 
 
+    // demo 中简单使用了一个本地缓存，此处需要根据实际场景判断是否需要引入分布式缓存
     private static final Cache<PaymentTypeEnum, ConsultResult> paymentResultCache = Caffeine.
             newBuilder().
             expireAfterWrite(Duration.ofMillis(cacheExpireMillis)).
-//            refreshAfterWrite(Duration.ofMillis(refreshMillis)).
+            refreshAfterWrite(Duration.ofMillis(refreshMillis)).
             maximumSize(100).
             build();
 
@@ -82,7 +79,7 @@ public class PaymentRemoteService {
         if (paymentTypeEnum == PaymentTypeEnum.NotDefine) {
             return  new ConsultResult(false, ConsultError.NotDefine.getErrorCode());
         }
-        // 2. 获取对应的支付元亨调用方法
+        // 2. 获取对应的支付远程调用方法
         var service = serviceMap.get(paymentTypeEnum);
         if (service == null) {
             return  new ConsultResult(false, ConsultError.NotNotFoundImpl.getErrorCode());
@@ -100,6 +97,7 @@ public class PaymentRemoteService {
                 Map.Entry::getKey,
                 entry -> CompletableFuture.supplyAsync(() -> wrapIsEnabled(entry.getValue(), opt), executor)
                         .exceptionally(ex -> {
+                            // 不同的异常封装为不同的 ConsultResult 返回
                             if (ex instanceof TimeoutException) {
                                 return ConstResult.timeOutResult;
                             }
@@ -145,7 +143,8 @@ public class PaymentRemoteService {
             return ConstResult.limitedResult;
         }
 
-        // 强制不走缓存
+        // 强制不走缓存，查询前删除缓存
+        // 高并发的情况下，还是可能会从缓存中读取到结果。这里间隔非常短，理论上不影响。如果是对一致性要求非常高的场景，需要通过事务和锁来支持
         if (opt.isNoCache()) {
             paymentResultCache.invalidate(paymentService.getPaymentType());
         }
