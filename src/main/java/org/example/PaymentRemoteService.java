@@ -1,10 +1,9 @@
 package org.example;
 
-import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.LoadingCache;
 import dev.failsafe.Failsafe;
 import dev.failsafe.RetryPolicy;
-import lombok.AllArgsConstructor;
 import org.example.circuit_breaker.CircuitBreak;
 import org.example.metric.Metric;
 import org.example.pay.PaymentBalanceImp;
@@ -27,11 +26,25 @@ import java.util.stream.Collectors;
  *  * 用户有多种支付方式（余额、红包、优惠券，代金券等），假如每种支付方式需要通过实时调用远程服务获取可用性。
  *  * 在外部资源环境不变情况下，请设计程序以最短响应时间获得尽可能多的可用支付方式列表。
  */
-@AllArgsConstructor
 public class PaymentRemoteService {
     private CircuitBreak circuitBreak; // 熔断器
     private Metric metric;             // 埋点上报
     private RateLimiter rateLimiter;   // 限流
+
+    private LoadingCache<PaymentTypeEnum, ConsultResult> paymentResultCache;
+    public PaymentRemoteService(
+            CircuitBreak circuitBreak, Metric metric, RateLimiter rateLimiter
+    ) {
+        this.circuitBreak = circuitBreak;
+        this.metric = metric;
+        this.rateLimiter = rateLimiter;
+        paymentResultCache = Caffeine.
+                newBuilder().
+                softValues().
+                expireAfterWrite(Duration.ofMillis(cacheExpireMillis)).
+                refreshAfterWrite(Duration.ofMillis(refreshMillis)).
+                maximumSize(100).build(key -> this.isEnabled(key.getKey()));
+    }
 
     // 定义通用线程池 - TODO 根据实际情况对参数进行调整
     private static final ExecutorService executor = new ThreadPoolExecutor(
@@ -64,14 +77,6 @@ public class PaymentRemoteService {
     // ------ 超时配置
     private static final long singleTimeOutMillis = 1000;
 
-
-    // demo 中简单使用了一个本地缓存，此处需要根据实际场景判断是否需要引入分布式缓存
-    private static final Cache<PaymentTypeEnum, ConsultResult> paymentResultCache = Caffeine.
-            newBuilder().
-            expireAfterWrite(Duration.ofMillis(cacheExpireMillis)).
-            refreshAfterWrite(Duration.ofMillis(refreshMillis)).
-            maximumSize(100).
-            build();
 
     public ConsultResult isEnabled(String payment) {
         // 1. valid paymentType
