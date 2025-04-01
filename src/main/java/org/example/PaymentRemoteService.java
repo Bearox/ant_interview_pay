@@ -27,11 +27,11 @@ import java.util.stream.Collectors;
  *  * 在外部资源环境不变情况下，请设计程序以最短响应时间获得尽可能多的可用支付方式列表。
  */
 public class PaymentRemoteService {
-    private CircuitBreak circuitBreak; // 熔断器
-    private Metric metric;             // 埋点上报
-    private RateLimiter rateLimiter;   // 限流
+    private final CircuitBreak circuitBreak; // 熔断器
+    private final Metric metric;             // 埋点上报
+    private final RateLimiter rateLimiter;   // 限流
 
-    private LoadingCache<PaymentTypeEnum, ConsultResult> paymentResultCache;
+    private final LoadingCache<PaymentTypeEnum, ConsultResult> paymentResultCache;
     public PaymentRemoteService(
             CircuitBreak circuitBreak, Metric metric, RateLimiter rateLimiter
     ) {
